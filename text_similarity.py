@@ -51,7 +51,7 @@ def check_internet_connection():
         print("网络连接失败，请检查网络。")
         return False
 
-def evaluate(model, data_loader, device, threshold=0.84):
+def evaluate(model, data_loader, device, threshold=0.625):
     model.eval()
     all_embeddings1 = []
     all_embeddings2 = []
