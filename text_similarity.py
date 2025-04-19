@@ -245,7 +245,7 @@ def main():
     model = train_model(model, train_data, val_data, device, 
                        batch_size=32,
                        epochs=5,
-                       patience=2,
+                       patience=1,
                        min_delta=1e-3)
 
     # 确保save_path在main函数中定义并传递到测试部分
