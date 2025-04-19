@@ -166,7 +166,9 @@ def main():
 
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-5
+        )
         scaler = GradScaler()
 
         best_score = 0
@@ -179,7 +181,8 @@ def main():
             accuracy, macro_f1, _, _ = evaluate(model, val_loader, device)
 
             current_score = 0.7 * accuracy + 0.3 * macro_f1
-            scheduler.step()
+            if epoch >= 10:  # 在第10个epoch后启用动态学习率调度器
+                scheduler.step(current_score)
 
             end_time = time.time()
             print(f"\nEpoch {epoch+1}/{15}")
@@ -208,10 +211,13 @@ def main():
 
     mean_accuracy = np.mean(accuracies)#计算平均准确率
     mean_f1 = np.mean(f1_scores)#计算平均宏F1分数
+    accuracy_variance = np.var(accuracies)
+    f1_variance = np.var(f1_scores)
+
 
     print("\n最终五折交叉验证结果:")
-    print(f"Accuracy均值: {mean_accuracy:.4f}")
-    print(f"Macro-F1均值: {mean_f1:.4f}")
+    print(f"Accuracy均值: {mean_accuracy:.4f}, 方差: {accuracy_variance:.4f}")
+    print(f"Macro-F1均值: {mean_f1:.4f}, 方差: {f1_variance:.4f}")
 
 if __name__ == "__main__":
     main()

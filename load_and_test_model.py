@@ -45,7 +45,9 @@ def main():
 
     # 在测试集上评估模型
     print("评估模型...")
-    test_metrics = evaluate(model, test_dataloader, device)
+    threshold_input = input("请输入评估时使用的阈值（默认值为0.625）: ")
+    threshold = float(threshold_input) if threshold_input else 0.625
+    test_metrics = evaluate(model, test_dataloader, device, threshold=threshold)
 
     print("\n测试集评估结果:")
     print(f"Accuracy: {test_metrics['accuracy']:.4f}")
