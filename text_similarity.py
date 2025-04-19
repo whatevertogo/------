@@ -1,12 +1,13 @@
+import os
+from datetime import timedelta
 import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer, InputExample, losses
 from torch.utils.data import Dataset, DataLoader
+from torch.cuda.amp import GradScaler
 from sklearn.metrics import accuracy_score, f1_score, recall_score
 from sklearn.model_selection import train_test_split
-from torch.cuda.amp import GradScaler
 from tqdm import tqdm
-from datetime import timedelta
 import requests
 
 class SentencePairDataset(Dataset):
@@ -33,9 +34,15 @@ def custom_collate_fn(batch):
     }
 
 def format_time(seconds):
+    '''
+    将秒数转换为可读的时间格式
+    '''
     return str(timedelta(seconds=int(seconds)))
 
 def check_internet_connection():
+    '''
+    检查网络连接是否正常
+    '''
     try:
         requests.get("https://huggingface.co", timeout=5)
         print("网络连接正常。")
@@ -105,7 +112,7 @@ def train_model(model, train_data, val_data, device, batch_size=64, epochs=3, pa
             batch_size=batch_size,
             shuffle=True,
             pin_memory=True,
-            num_workers=2,
+            num_workers=0,  # Windows下使用0避免多进程问题
             collate_fn=custom_collate_fn
         )
         val_dataloader = DataLoader(
@@ -113,18 +120,22 @@ def train_model(model, train_data, val_data, device, batch_size=64, epochs=3, pa
             batch_size=batch_size,
             shuffle=False,
             pin_memory=True,
-            num_workers=2,
+            num_workers=0,  # Windows下使用0避免多进程问题
             collate_fn=custom_collate_fn
         )
 
         train_loss = losses.CosineSimilarityLoss(model)
         optimizer = torch.optim.Adam(model.parameters(), lr=2e-5)
-        scaler = torch.amp.GradScaler('cuda')
+        scaler = GradScaler()
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.1)  # 添加学习率调度器
         
         best_score = 0
         no_improve_epochs = 0
         
+        # 增加日志输出，记录每个epoch的时间消耗和学习率变化
+        import time
         for epoch in range(epochs):
+            start_time = time.time()
             model.train()
             total_loss = 0
             progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{epochs}")
@@ -132,6 +143,7 @@ def train_model(model, train_data, val_data, device, batch_size=64, epochs=3, pa
             for batch in train_dataloader:
                 sentences1 = batch['sentences1']
                 sentences2 = batch['sentences2']
+                labels = torch.tensor(batch['labels'], dtype=torch.float32, device=device)
 
                 optimizer.zero_grad()
 
@@ -141,7 +153,7 @@ def train_model(model, train_data, val_data, device, batch_size=64, epochs=3, pa
                 features1 = {key: val.to(device) for key, val in features1.items()}
                 features2 = {key: val.to(device) for key, val in features2.items()}
 
-                loss = train_loss([features1, features2], torch.tensor(batch['labels'], dtype=torch.float32, device=device))
+                loss = train_loss([features1, features2], labels)
 
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -157,17 +169,37 @@ def train_model(model, train_data, val_data, device, batch_size=64, epochs=3, pa
             val_metrics = evaluate(model, val_dataloader, device)
             current_score = val_metrics['score']
 
+            scheduler.step()  # 更新学习率
+            current_lr = optimizer.param_groups[0]['lr']
+
+            end_time = time.time()
+            epoch_time = end_time - start_time
+
             print(f"\nEpoch {epoch+1}/{epochs}")
             print(f"平均训练损失: {avg_loss:.4f}")
-            print(f"验证集评估: Accuracy={val_metrics['accuracy']:.4f}, "
-                  f"F1={val_metrics['f1']:.4f}, Recall={val_metrics['recall']:.4f}")
+            print(f"验证集评估: Accuracy={val_metrics['accuracy']:.4f}, F1={val_metrics['f1']:.4f}, Recall={val_metrics['recall']:.4f}")
             print(f"当前得分: {current_score:.4f}")
+            print(f"当前学习率: {current_lr:.2e}")
+            print(f"本轮耗时: {epoch_time:.2f}秒")
 
             if current_score > best_score + min_delta:
                 best_score = current_score
                 no_improve_epochs = 0
-                print(f"保存最佳模型，得分: {best_score:.4f}")
-                model.save('best_model')
+                # 修改save_path生成逻辑，使其每次保存模型时自动递增编号
+                save_dir = "saved_models"
+                os.makedirs(save_dir, exist_ok=True)
+
+                # 获取当前目录下的所有模型文件，找到最新编号
+                existing_models = [f for f in os.listdir(save_dir) if f.startswith("best_model_") and f.endswith(".pth")]
+                if existing_models:
+                    latest_model = max(existing_models, key=lambda x: int(x.split('_')[2].split('.')[0]))
+                    next_model_number = int(latest_model.split('_')[2].split('.')[0]) + 1
+                else:
+                    next_model_number = 1
+
+                save_path = os.path.join(save_dir, f"best_model_{next_model_number}.pth")
+                model.save(save_path)
+
             else:
                 no_improve_epochs += 1
                 print(f"模型表现未提升，已经 {no_improve_epochs}/{patience} 个epoch")
@@ -216,9 +248,46 @@ def main():
                        patience=2,
                        min_delta=1e-3)
 
-    print("\n保存最终模型...")
-    model.save('chinese_semantic_model_final')
-    print("模型已保存为: chinese_semantic_model_final")
+    # 确保save_path在main函数中定义并传递到测试部分
+    save_dir = "saved_models"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 获取当前目录下的所有模型文件，找到最新编号
+    existing_models = [f for f in os.listdir(save_dir) if f.startswith("best_model_") and f.endswith(".pth")]
+    if existing_models:
+        latest_model = max(existing_models, key=lambda x: int(x.split('_')[2].split('.')[0]))
+        next_model_number = int(latest_model.split('_')[2].split('.')[0]) + 1
+    else:
+        next_model_number = 1
+
+    save_path = os.path.join(save_dir, f"best_model_{next_model_number}.pth")
+    model.save(save_path)
+
+    # 在main函数中加载最佳模型时使用正确的save_path
+    print("\n加载最佳模型进行测试...")
+    model = SentenceTransformer(save_path)
+
+    # 准备测试集加载器
+    test_dataset = SentencePairDataset(
+        test_data['q1'].tolist(),
+        test_data['q2'].tolist(),
+        test_data['label'].tolist()
+    )
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=32,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=0,
+        collate_fn=custom_collate_fn
+    )
+
+    test_metrics = evaluate(model, test_dataloader, device)
+    print("\n测试集评估结果:")
+    print(f"Accuracy: {test_metrics['accuracy']:.4f}")
+    print(f"F1-score: {test_metrics['f1']:.4f}")
+    print(f"Recall: {test_metrics['recall']:.4f}")
+    print(f"最终得分: {test_metrics['score']:.4f}")
 
 if __name__ == "__main__":
     main()

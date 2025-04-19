@@ -7,9 +7,11 @@ from torchvision import transforms, models
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score
 from PIL import Image
-import pandas as pd
 
 class VehicleDataset(Dataset):
+    '''
+    自定义数据集类
+    '''
     def __init__(self, image_paths, labels, transform=None):
         self.image_paths = image_paths
         self.labels = labels
@@ -26,6 +28,9 @@ class VehicleDataset(Dataset):
         return image, label
 
 def train_one_epoch(model, train_loader, criterion, optimizer, device):
+    '''
+    训练一个epoch
+    '''
     model.train()
     running_loss = 0.0
     for images, labels in train_loader:
@@ -41,6 +46,9 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device):
     return running_loss / len(train_loader)
 
 def evaluate(model, val_loader, device, verbose=False):
+    '''''
+    评估函数，计算准确率和宏F1分数
+    '''''
     model.eval()
     all_preds = []
     all_labels = []
@@ -72,7 +80,7 @@ def evaluate(model, val_loader, device, verbose=False):
     f1_variance = np.var(batch_f1_scores) if len(batch_f1_scores) > 1 else 0.0
     
     if verbose and len(batch_accuracies) > 0:
-        print(f"\n批次级别统计:")
+        print("\n批次级别统计:")
         print(f"批次数量: {len(batch_accuracies)}")
         print(f"批次准确率: {[f'{acc:.4f}' for acc in batch_accuracies]}")
         print(f"批次宏F1分数: {[f'{f1:.4f}' for f1 in batch_f1_scores]}")
@@ -115,14 +123,14 @@ def main():
     for i in range(3):
         print(f"类别 {i+1}: {sum(labels == i)} 个样本")
     
+    # 5折交叉验证
     kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    
     accuracies = []
     f1_scores = []
-    
+
     for fold, (train_idx, val_idx) in enumerate(kfold.split(image_paths, labels)):
         print(f"\nFold {fold + 1}")
-        
+
         train_dataset = VehicleDataset(
             [image_paths[i] for i in train_idx],
             [labels[i] for i in train_idx],
@@ -133,29 +141,29 @@ def main():
             [labels[i] for i in val_idx],
             transform=transform
         )
-        
+
         train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=32)
-        
+
         model = models.resnet18(pretrained=True)
         model.fc = nn.Linear(model.fc.in_features, 3)
         model = model.to(device)
-        
+
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        
+
         best_score = 0
         patience = 3
         no_improve = 0
-        
+
         for epoch in range(15):
             train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
             accuracy, macro_f1, _, _ = evaluate(model, val_loader, device)
-            
+
             current_score = 0.7 * accuracy + 0.3 * macro_f1
-            
+
             print(f"轮次 {epoch+1}, 损失: {train_loss:.4f}, 准确率: {accuracy:.4f}, 宏F1: {macro_f1:.4f}, 得分: {current_score:.4f}")
-            
+
             if current_score > best_score:
                 best_score = current_score
                 no_improve = 0
@@ -165,19 +173,19 @@ def main():
                 if no_improve >= patience:
                     print(f"在轮次 {epoch+1} 触发早停")
                     break
-        
+
         model.load_state_dict(torch.load(f'best_model_fold{fold}.pth'))
         final_accuracy, final_macro_f1, _, _ = evaluate(model, val_loader, device, verbose=True)
         accuracies.append(final_accuracy)
         f1_scores.append(final_macro_f1)
-        
+
         print(f"\n第 {fold + 1} 折最终结果:")
         print(f"Accuracy: {final_accuracy:.4f}")
         print(f"Macro-F1: {final_macro_f1:.4f}")
-    
+
     mean_accuracy = np.mean(accuracies)
     mean_f1 = np.mean(f1_scores)
-    
+
     print("\n最终五折交叉验证结果:")
     print(f"Accuracy: {mean_accuracy:.4f}")
     print(f"Macro-F1: {mean_f1:.4f}")
