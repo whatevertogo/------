@@ -199,19 +199,19 @@ def main():
 
         model.load_state_dict(torch.load(f'best_model_fold{fold}.pth'))
         final_accuracy, final_macro_f1, _, _ = evaluate(model, val_loader, device, verbose=True)
-        accuracies.append(final_accuracy)
-        f1_scores.append(final_macro_f1)
+        accuracies.append(final_accuracy)#将当前准确率添加到列表
+        f1_scores.append(final_macro_f1)#将当前验证机宏F1分数添加到列表
 
         print(f"\n第 {fold + 1} 折最终结果:")
         print(f"Accuracy: {final_accuracy:.4f}")
         print(f"Macro-F1: {final_macro_f1:.4f}")
 
-    mean_accuracy = np.mean(accuracies)
-    mean_f1 = np.mean(f1_scores)
+    mean_accuracy = np.mean(accuracies)#计算平均准确率
+    mean_f1 = np.mean(f1_scores)#计算平均宏F1分数
 
     print("\n最终五折交叉验证结果:")
-    print(f"Accuracy: {mean_accuracy:.4f}")
-    print(f"Macro-F1: {mean_f1:.4f}")
+    print(f"Accuracy均值: {mean_accuracy:.4f}")
+    print(f"Macro-F1均值: {mean_f1:.4f}")
 
 if __name__ == "__main__":
     main()
