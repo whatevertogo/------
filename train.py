@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -7,6 +8,8 @@ from torchvision import transforms, models
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score
 from PIL import Image
+from tqdm import tqdm
+from torch.cuda.amp import GradScaler, autocast
 
 class VehicleDataset(Dataset):
     '''
@@ -27,28 +30,39 @@ class VehicleDataset(Dataset):
         label = self.labels[idx]
         return image, label
 
-def train_one_epoch(model, train_loader, criterion, optimizer, device):
+def train_one_epoch(model, train_loader, criterion, optimizer, device, scaler):
     '''
-    训练一个epoch
+    训练一个epoch，支持混合精度训练
     '''
     model.train()
     running_loss = 0.0
+    progress_bar = tqdm(total=len(train_loader), desc="训练进度")
+
     for images, labels in train_loader:
         images, labels = images.to(device), labels.to(device)
-        
+
         optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-        
+        with autocast():
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+
         running_loss += loss.item()
+        progress_bar.update(1)
+        progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+
+    progress_bar.close()
     return running_loss / len(train_loader)
 
 def evaluate(model, val_loader, device, verbose=False):
     '''''
+
     评估函数，计算准确率和宏F1分数
     '''''
+
     model.eval()
     all_preds = []
     all_labels = []
@@ -92,19 +106,20 @@ def evaluate(model, val_loader, device, verbose=False):
 def main():
     torch.manual_seed(42)
     np.random.seed(42)
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"使用设备: {device}")
-    
+
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomRotation(10),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                           std=[0.229, 0.224, 0.225])
+                             std=[0.229, 0.224, 0.225])
     ])
-    
+
     data_dir = "Data/Data"
     image_paths = []
     labels = []
@@ -142,8 +157,8 @@ def main():
             transform=transform
         )
 
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=32)
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=4)
+        val_loader = DataLoader(val_dataset, batch_size=32, num_workers=4)
 
         model = models.resnet18(pretrained=True)
         model.fc = nn.Linear(model.fc.in_features, 3)
@@ -151,18 +166,26 @@ def main():
 
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+        scaler = GradScaler()
 
         best_score = 0
         patience = 3
         no_improve = 0
 
         for epoch in range(15):
-            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            start_time = time.time()
+            train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler)
             accuracy, macro_f1, _, _ = evaluate(model, val_loader, device)
 
             current_score = 0.7 * accuracy + 0.3 * macro_f1
+            scheduler.step()
 
-            print(f"轮次 {epoch+1}, 损失: {train_loss:.4f}, 准确率: {accuracy:.4f}, 宏F1: {macro_f1:.4f}, 得分: {current_score:.4f}")
+            end_time = time.time()
+            print(f"\nEpoch {epoch+1}/{15}")
+            print(f"训练损失: {train_loss:.4f}")
+            print(f"验证集: 准确率={accuracy:.4f}, 宏F1={macro_f1:.4f}, 得分={current_score:.4f}")
+            print(f"本轮耗时: {end_time - start_time:.2f}秒")
 
             if current_score > best_score:
                 best_score = current_score
