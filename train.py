@@ -150,22 +150,28 @@ def main():
     for i in range(3):
         print(f"类别 {i+1}: {sum(labels == i)} 个样本")
 
-    # 5折交叉验证
-    kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    accuracies = []
-    f1_scores = []
+    # 将文件路径和标签映射为索引
+    indices = np.arange(len(image_paths))
+    np.random.shuffle(indices)
+    image_paths = np.array(image_paths)[indices]
+    labels = np.array(labels)[indices]
 
-    for fold, (train_idx, val_idx) in enumerate(kfold.split(image_paths, labels)):
+    # 创建索引到数据的映射
+    data_mapping = {i: (image_paths[i], labels[i]) for i in range(len(image_paths))}
+
+    # 在后续处理中仅使用索引
+    kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(indices, labels)):
         print(f"\nFold {fold + 1}")
 
         train_dataset = VehicleDataset(
-            [image_paths[i] for i in train_idx],
-            [labels[i] for i in train_idx],
+            [data_mapping[i][0] for i in train_idx],
+            [data_mapping[i][1] for i in train_idx],
             transform=transform,
         )
         val_dataset = VehicleDataset(
-            [image_paths[i] for i in val_idx],
-            [labels[i] for i in val_idx],
+            [data_mapping[i][0] for i in val_idx],
+            [data_mapping[i][1] for i in val_idx],
             transform=transform,
         )
 
@@ -240,4 +246,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # 在主函数中初始化 accuracies 和 f1_scores
+    accuracies = []
+    f1_scores = []
     main()

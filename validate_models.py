@@ -30,7 +30,22 @@ def validate_cross_validation_models(data_dir, device):
     image_paths = np.array(image_paths)
     labels = np.array(labels)
 
-    # 5折交叉验证
+    # # 在使用验证集划分之前打乱数据顺序
+    # indices = np.arange(len(image_paths))
+    # np.random.shuffle(indices)
+    # image_paths = image_paths[indices]
+    # labels = labels[indices]
+
+    # 将文件路径和标签映射为索引
+    indices = np.arange(len(image_paths))
+    np.random.shuffle(indices)
+    image_paths = np.array(image_paths)[indices]
+    labels = np.array(labels)[indices]
+
+    # 创建索引到数据的映射
+    data_mapping = {i: (image_paths[i], labels[i]) for i in range(len(image_paths))}
+
+    # 验证集划分
     fold_results = []
     for fold in range(5):
         print(f"\n加载 Fold {fold} 的模型并评估...")
@@ -45,8 +60,8 @@ def validate_cross_validation_models(data_dir, device):
         # 创建验证集加载器
         val_indices = np.arange(len(image_paths)) % 5 == fold
         val_dataset = VehicleDataset(
-            image_paths[val_indices],
-            labels[val_indices],
+            [data_mapping[i][0] for i in val_indices],
+            [data_mapping[i][1] for i in val_indices],
             transform=transform,
         )
         val_loader = DataLoader(val_dataset, batch_size=32, num_workers=4)
@@ -54,14 +69,13 @@ def validate_cross_validation_models(data_dir, device):
         # 评估模型
         accuracy, macro_f1, _, _ = evaluate(model, val_loader, device)
         print(f"Fold {fold} - 准确率: {accuracy:.4f}, 宏F1: {macro_f1:.4f}")
-        fold_results.append((accuracy, macro_f1))
 
     # 汇总结果
     accuracies = [result[0] for result in fold_results]
     f1_scores = [result[1] for result in fold_results]
     print("\n最终五折交叉验证结果:")
-    print(f"Accuracy均值: {np.mean(accuracies):.4f}, 方差: {np.var(accuracies):.4f}")
-    print(f"Macro-F1均值: {np.mean(f1_scores):.4f}, 方差: {np.var(f1_scores):.4f}")
+    print(f"Accuracy均值: {np.mean(accuracies):.8f}, 方差: {np.var(accuracies):.8f}")
+    print(f"Macro-F1均值: {np.mean(f1_scores):.8f}, 方差: {np.var(f1_scores):.8f}")
 
 if __name__ == "__main__":
     torch.manual_seed(42)
