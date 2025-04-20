@@ -30,11 +30,11 @@ def validate_cross_validation_models(data_dir, device):
     image_paths = np.array(image_paths)
     labels = np.array(labels)
 
-    # # 在使用验证集划分之前打乱数据顺序
-    # indices = np.arange(len(image_paths))
-    # np.random.shuffle(indices)
-    # image_paths = image_paths[indices]
-    # labels = labels[indices]
+    # 在使用验证集划分之前打乱数据顺序
+    indices = np.arange(len(image_paths))
+    np.random.shuffle(indices)
+    image_paths = image_paths[indices]
+    labels = labels[indices]
 
     # 将文件路径和标签映射为索引
     indices = np.arange(len(image_paths))
